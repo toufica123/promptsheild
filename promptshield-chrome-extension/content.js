@@ -15,14 +15,14 @@ console.log(`PromptShield active in tab. Session ID: ${sessionTabId}`);
 let activeShieldButton = null;
 
 const SHIELD_SVG = `
-<svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" stroke="#F5C518" stroke-width="2" stroke-linejoin="round" fill="rgba(245,197,24,0.15)"/>
   <path d="M9 12L11 14L15 10" stroke="#F5C518" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
 `;
 
 const SHIELD_SVG_LOADING = `
-<svg class="ps-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: ps-rotate 1s linear infinite;">
+<svg class="ps-spin" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: ps-rotate 1s linear infinite;">
   <circle cx="12" cy="12" r="10" stroke="rgba(245,197,24,0.2)" stroke-width="3"/>
   <path d="M12 2C6.47715 2 2 6.47715 2 12" stroke="#F5C518" stroke-width="3" stroke-linecap="round"/>
 </svg>
@@ -35,7 +35,7 @@ const SHIELD_SVG_LOADING = `
 `;
 
 const SHIELD_SVG_SUCCESS = `
-<svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" stroke="#16a34a" stroke-width="2" stroke-linejoin="round" fill="rgba(22,163,74,0.2)"/>
   <path d="M9 12L11 14L15 10" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
@@ -52,14 +52,14 @@ function injectShieldStyle() {
     style.textContent = `
         .promptshield-btn {
             position: fixed;
-            left: 24px;
-            bottom: 24px;
+            right: 28px;
+            bottom: 100px;
             z-index: 999999;
             background: rgba(18, 18, 18, 0.85);
             border: 1px solid rgba(245, 197, 24, 0.4);
             border-radius: 50%;
-            width: 44px;
-            height: 44px;
+            width: 56px;
+            height: 56px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -125,13 +125,20 @@ function findTargetInput() {
  */
 function updateInputValue(el, value) {
     el.focus();
+    
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
         el.select();
-        document.execCommand('insertText', false, value);
+        const success = document.execCommand('insertText', false, value);
+        
+        // Bulletproof fallback if execCommand was not fully processed
+        if (!success || el.value !== value) {
+            el.value = value;
+        }
+        
         // Dispatch fallback input events to be absolutely safe
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-    } else if (el.getAttribute('contenteditable') === 'true') {
+    } else if (el.isContentEditable) {
         // Create selection range covering all contents inside contenteditable element
         const range = document.createRange();
         range.selectNodeContents(el);
@@ -140,8 +147,16 @@ function updateInputValue(el, value) {
         sel.addRange(range);
         
         // Execute native input swap, letting virtual DOM capture input changes natively
-        document.execCommand('insertText', false, value);
+        const success = document.execCommand('insertText', false, value);
+        
+        // Bulletproof fallback for custom contenteditable frameworks
+        if (!success || el.innerText !== value) {
+            el.innerText = value;
+            el.innerHTML = value; // also sync innerHTML if textNodes are nested
+        }
+        
         el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }
 
