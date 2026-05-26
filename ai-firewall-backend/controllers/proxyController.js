@@ -3,6 +3,8 @@ const detectRisk = require("../services/riskService");
 const { maskSensitiveData, unmaskSensitiveData } = require("../services/maskingService");
 const detectPromptInjection = require("../services/promptInjectionService");
 const { callGroqAPI } = require("../services/openaiService");
+const { extractCodeBlocks } = require("../services/codeAnalysis/textExtractor");
+const { analyzeLicenseRisk } = require("../services/codeAnalysis/licenseMatcher");
 
 const BLOCK_THRESHOLD = 80;
 
@@ -53,31 +55,63 @@ exports.chatProxy = async (req, res) => {
         const sanitizedPrompt = await maskSensitiveData(sessionId, prompt);
         console.log("Sanitized Prompt:", sanitizedPrompt);
 
-        let blocked = false;
-        if (riskAnalysis.riskScore >= BLOCK_THRESHOLD) {
-            blocked = true;
-        }
-
-        // Create audit log (saves sanitized prompt for perfect compliance)
-        await AuditLog.create({
-            originalPrompt: prompt,
-            sanitizedPrompt: sanitizedPrompt,
-            riskScore: riskAnalysis.riskScore,
-            detected: riskAnalysis.detected,
-            blocked: blocked
-        });
-
         // Call Groq API
         const aiResponse = await callGroqAPI(sanitizedPrompt);
 
+        // Code Analysis & Copyleft License Auditing on AI Response
+        const codeBlocks = extractCodeBlocks(aiResponse);
+        let copyleftDetected = false;
+        let matchedLicense = "";
+        let licenseSimilarity = 0.0;
+        let offendingCode = "";
+        
+        let finalRiskScore = riskAnalysis.riskScore;
+        const finalDetectedList = [...riskAnalysis.detected];
+
+        for (const block of codeBlocks) {
+            const licenseResult = analyzeLicenseRisk(block.code, block.language);
+            if (licenseResult.matched) {
+                copyleftDetected = true;
+                matchedLicense = licenseResult.license;
+                licenseSimilarity = licenseResult.similarity;
+                offendingCode = block.code;
+
+                finalRiskScore = Math.min(100, finalRiskScore + 40);
+                finalDetectedList.push(`Copyleft License detected: ${licenseResult.license}`);
+                break; // Flag the first matching copyleft violation
+            }
+        }
+
         // Unmask the response before sending to user (replaces [omni-*] back with real values)
-        const restoredResponse = unmaskSensitiveData(sessionId, aiResponse);
+        let restoredResponse = unmaskSensitiveData(sessionId, aiResponse);
+
+        // If copyleft violations are present, append a legal warning banner
+        if (copyleftDetected) {
+            restoredResponse = `[⚠️ WARNING: PromptShield has detected copyleft licensed code (${matchedLicense}) within this response. Use at your own legal risk.]\n\n${restoredResponse}`;
+        }
+
+        // Create audit log with comprehensive compliance data in one write
+        await AuditLog.create({
+            originalPrompt: prompt,
+            sanitizedPrompt: sanitizedPrompt,
+            riskScore: finalRiskScore,
+            detected: finalDetectedList,
+            blocked: false,
+            copyleftDetected: copyleftDetected,
+            matchedLicense: matchedLicense,
+            licenseSimilarity: licenseSimilarity,
+            offendingCode: offendingCode,
+            aiResponse: restoredResponse
+        });
 
         res.json({
             success: true,
-            riskScore: riskAnalysis.riskScore,
-            detected: riskAnalysis.detected,
+            riskScore: finalRiskScore,
+            detected: finalDetectedList,
             sanitizedPrompt,
+            copyleftDetected,
+            matchedLicense,
+            licenseSimilarity,
             aiResponse: restoredResponse
         });
 

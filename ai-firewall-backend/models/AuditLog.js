@@ -27,6 +27,26 @@ const auditLogSchema = new mongoose.Schema({
         default: false
     },
 
+    copyleftDetected: {
+        type: Boolean,
+        default: false
+    },
+
+    matchedLicense: {
+        type: String,
+        default: ""
+    },
+
+    licenseSimilarity: {
+        type: Number,
+        default: 0.0
+    },
+
+    offendingCode: {
+        type: String,
+        default: ""
+    },
+
     aiResponse: {
         type: String,
         default: ""
