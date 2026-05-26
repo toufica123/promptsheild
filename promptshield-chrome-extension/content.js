@@ -51,22 +51,22 @@ function injectShieldStyle() {
     style.id = 'promptshield-styles';
     style.textContent = `
         .promptshield-btn {
-            position: absolute;
-            right: 48px;
-            bottom: 12px;
+            position: fixed;
+            left: 24px;
+            bottom: 24px;
             z-index: 999999;
             background: rgba(18, 18, 18, 0.85);
             border: 1px solid rgba(245, 197, 24, 0.4);
-            border-radius: 6px;
-            width: 32px;
-            height: 32px;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             backdrop-filter: blur(8px);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
         }
         .promptshield-btn:hover {
             border-color: rgba(245, 197, 24, 0.8);
@@ -121,18 +121,27 @@ function findTargetInput() {
 
 /**
  * updateInputValue - Safely writes text back to textarea or contenteditable nodes.
+ * Uses document.execCommand('insertText') to ensure full virtual DOM React/Vue binding updates.
  */
 function updateInputValue(el, value) {
+    el.focus();
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-        el.value = value;
-        // Trigger necessary event listeners on site frameworks
+        el.select();
+        document.execCommand('insertText', false, value);
+        // Dispatch fallback input events to be absolutely safe
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (el.getAttribute('contenteditable') === 'true') {
-        el.innerText = value;
-        // Trigger React/Vue input watchers
-        const textEvent = new InputEvent('input', { bubbles: true, cancelable: true });
-        el.dispatchEvent(textEvent);
+        // Create selection range covering all contents inside contenteditable element
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        
+        // Execute native input swap, letting virtual DOM capture input changes natively
+        document.execCommand('insertText', false, value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
     }
 }
 
@@ -170,14 +179,8 @@ function renderFloatingShield() {
     button.innerHTML = SHIELD_SVG;
     button.title = 'Click to Mask Outbound Secrets via PromptShield';
 
-    // Mount locally inside the parent container of the textarea so it anchors perfectly in the corner
-    const parent = inputArea.parentElement;
-    if (parent) {
-        parent.style.position = 'relative';
-        parent.appendChild(button);
-    } else {
-        document.body.appendChild(button);
-    }
+    // Append globally to document.body as a premium fixed bottom-left floating shield
+    document.body.appendChild(button);
     activeShieldButton = button;
 
     // Click handler: Intercept prompt, fetch masked state from background script worker
