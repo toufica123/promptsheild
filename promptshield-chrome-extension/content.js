@@ -54,7 +54,8 @@ function injectShieldStyle() {
             position: fixed;
             right: 28px;
             bottom: 100px;
-            z-index: 999999;
+            z-index: 2147483647 !important;
+            pointer-events: auto !important;
             background: rgba(18, 18, 18, 0.85);
             border: 1px solid rgba(245, 197, 24, 0.4);
             border-radius: 50%;
@@ -123,7 +124,22 @@ function findTargetInput() {
  * updateInputValue - Safely writes text back to textarea or contenteditable nodes.
  * Uses document.execCommand('insertText') to ensure full virtual DOM React/Vue binding updates.
  */
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+/**
+ * updateInputValue - Safely writes text back to textarea or contenteditable nodes.
+ * Uses a robust three-layered framework (synthetic paste events, targeted caret insertion, and structural HTML fallback)
+ * to ensure rich editors (like Quill in Gemini and ProseMirror in ChatGPT) update and persist their state cleanly.
+ */
 function updateInputValue(el, value) {
+    console.log('[PromptShield] updateInputValue called on:', el.tagName, 'with value length:', value.length);
     el.focus();
     
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
@@ -139,24 +155,37 @@ function updateInputValue(el, value) {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (el.isContentEditable) {
-        // Create selection range covering all contents inside contenteditable element
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
+        console.log('[PromptShield] Performing asynchronous HTML paragraph insertion...');
         
-        // Execute native input swap, letting virtual DOM capture input changes natively
-        const success = document.execCommand('insertText', false, value);
+        // Build well-formed HTML paragraphs. Quill/ProseMirror requires block-level tags.
+        const lines = value.split('\n');
+        const paragraphHTML = lines.map(line => `<p>${line ? escapeHtml(line) : '<br>'}</p>`).join('');
         
-        // Bulletproof fallback for custom contenteditable frameworks
-        if (!success || el.innerText !== value) {
-            el.innerText = value;
-            el.innerHTML = value; // also sync innerHTML if textNodes are nested
+        // Inject block paragraphs directly into DOM
+        el.innerHTML = paragraphHTML;
+        
+        // Restore caret focus and position it at the end of the text node
+        el.focus();
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false); // Collapse caret to the end
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        } catch (e) {
+            console.warn('[PromptShield] Failed to set caret selection:', e);
         }
         
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        // CRITICAL: We must delay the event dispatch by 50ms to allow the editor's 
+        // internal asynchronous MutationObserver to successfully capture the new DOM structure,
+        // parse it into its model, and prevent a premature framework reconciliation loop from reverting it.
+        setTimeout(() => {
+            console.log('[PromptShield] Dispatching delayed sync events...');
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+        }, 50);
     }
 }
 
@@ -166,7 +195,7 @@ function updateInputValue(el, value) {
 function getInputValue(el) {
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
         return el.value;
-    } else if (el.getAttribute('contenteditable') === 'true') {
+    } else if (el.isContentEditable) {
         return el.innerText;
     }
     return '';
@@ -200,25 +229,52 @@ function renderFloatingShield() {
 
     // Click handler: Intercept prompt, fetch masked state from background script worker
     button.addEventListener('click', async () => {
-        const rawText = getInputValue(inputArea);
-        if (!rawText.trim()) return;
+        console.log('[PromptShield] Shield button clicked!');
+        
+        // Dynamically find active input node to avoid stale React element references!
+        const activeInput = findTargetInput();
+        if (!activeInput) {
+            console.warn('[PromptShield] Active conversational input area not found in DOM.');
+            return;
+        }
+        
+        const rawText = getInputValue(activeInput);
+        console.log('[PromptShield] Active Target Input Area Element:', activeInput);
+        console.log('[PromptShield] Retrieved prompt text:', rawText);
+        
+        if (!rawText.trim()) {
+            console.warn('[PromptShield] Text area is empty. Ignoring click.');
+            return;
+        }
 
         // Check if shield is disabled by user in settings
         chrome.storage.local.get(['shieldActive'], async (res) => {
+            console.log('[PromptShield] Current shieldActive setting:', res.shieldActive);
             if (res.shieldActive === false) {
                 console.log('PromptShield is currently disabled.');
                 return;
             }
 
             button.innerHTML = SHIELD_SVG_LOADING;
+            console.log('[PromptShield] Dispatching mask message to background service worker...');
 
             chrome.runtime.sendMessage({
                 action: 'mask',
                 prompt: rawText,
                 sessionId: sessionTabId
             }, (response) => {
+                const lastError = chrome.runtime.lastError;
+                if (lastError) {
+                    console.error('[PromptShield] Runtime communication error:', lastError);
+                    alert('PromptShield Warning: Please refresh this browser tab to reload the security context after updating the extension.');
+                    button.innerHTML = SHIELD_SVG;
+                    return;
+                }
+
+                console.log('[PromptShield] Masking response received:', response);
                 if (response && response.success) {
-                    updateInputValue(inputArea, response.maskedPrompt);
+                    console.log('[PromptShield] Swapping text in input with:', response.maskedPrompt);
+                    updateInputValue(activeInput, response.maskedPrompt);
                     button.innerHTML = SHIELD_SVG_SUCCESS;
                     button.classList.add('success');
 
