@@ -1,49 +1,50 @@
-# PromptShield AI — Comprehensive Project Context File
+# PromptShield AI - Comprehensive Project Context File
 
 This document serves as an exhaustive reference of the PromptShield codebase, including folders, schemas, configurations, API definitions, and special runtime details. Developers and AI coding assistants can read this file to obtain immediate, full-fidelity context on the entire workspace.
 
 ---
 
-## 📂 Codebase File Manifest
+## Codebase File Manifest
 
 ```
 heritage/
-├── README.md                              # Main system overview & setup
-├── CONTEXT.md                             # [THIS FILE] Technical reference & schemas
+├── README.md                              # Main system overview, setup, and testing
+├── CONTEXT.md                             # [THIS FILE] Technical reference and schemas
 ├── promptshield-chrome-extension/          # MV3 Chrome Extension
-│   ├── manifest.json                      # Extension manifest permissions & sandbox
-│   ├── content.js                         # Content injection & DOM MutationObservers
-│   ├── background.js                      # Background worker & gateway coordinator
+│   ├── manifest.json                      # Extension manifest permissions and sandbox
+│   ├── content.js                         # Content injection and DOM MutationObservers
+│   ├── background.js                      # Background worker and gateway coordinator
 │   ├── popup.html                         # Glassmorphic HUD panel HTML
 │   ├── popup.css                          # Sleek HUD panel styling
 │   └── popup.js                           # Popup event controller
-├── ai-firewall-backend/                   # Express Gateway & Audit Logger
+├── ai-firewall-backend/                   # Express Gateway and Audit Logger
 │   ├── server.js                          # Server initialization (Port 5000)
 │   ├── models/
 │   │   └── AuditLog.js                    # MongoDB mongoose database schema
 │   ├── controllers/
-│   │   └── proxyController.js             # LLM Chat proxy & AST pipeline interceptor
+│   │   └── proxyController.js             # LLM Chat proxy and AST pipeline interceptor
 │   ├── services/
 │   │   └── codeAnalysis/
-│   │       ├── textExtractor.js           # Markdown cleaner & backtick isolator
-│   │       ├── astParser.js               # Acorn ES6 JS parser & token normalizer
-│   │       └── licenseMatcher.js          # SPDX scan & Jaccard bigram signature matcher
+│   │       ├── textExtractor.js           # Markdown cleaner and backtick isolator
+│   │       ├── astParser.js               # Acorn ES6 JS parser and token normalizer
+│   │       └── licenseMatcher.js          # SPDX scan and Jaccard bigram signature matcher
 │   └── test/
 │       └── code-analysis.test.js          # AST test suite (10/10 tests passing)
 └── sdk_module/                            # Core Standalone SDK
     └── omnishield-core-sdk/
         ├── index.js                       # Primary SDK module API
         ├── ai-scanner.js                  # PII, API Key, and Secrets scanner
-        └── test-sdk.js                    # Core SDK validation test suite
+        ├── test-sdk.js                    # Comprehensive core SDK validation suite
+        └── test-edge-cases.js             # Bounds and stress stress-tests for SDK rules
 ```
 
 ---
 
-## 🗄️ Database Schemas (MongoDB)
+## Database Schemas (MongoDB)
 
-The firewall gateway uses a MongoDB collection (`mongodb://localhost:27017/promptshield`) to log interactions, audit metrics, and track copyleft license violations.
+The firewall gateway uses a MongoDB collection (mongodb://localhost:27017/promptshield) to log interactions, audit metrics, and track copyleft license violations.
 
-### 1. `AuditLog` Schema
+### 1. AuditLog Schema
 Defined in `ai-firewall-backend/models/AuditLog.js`:
 ```javascript
 const AuditLogSchema = new mongoose.Schema({
@@ -62,13 +63,13 @@ const AuditLogSchema = new mongoose.Schema({
 
 ---
 
-## 🔌 API Endpoints & Request/Response Schemas
+## API Endpoints and Request/Response Schemas
 
-All backend network operations are managed by the gateway server running locally on **port `5000`**.
+All backend network operations are managed by the gateway server running locally on port 5000.
 
-### 1. Mask Prompt (PII & Secret Redaction)
-- **Endpoint**: `POST /api/proxy/mask`
-- **Controller**: `proxyController.js`
+### 1. Mask Prompt (PII and Secret Redaction)
+- **Endpoint**: POST /api/proxy/mask
+- **Controller**: proxyController.js
 - **Request Body**:
   ```json
   {
@@ -85,8 +86,8 @@ All backend network operations are managed by the gateway server running locally
   ```
 
 ### 2. Unmask Text (Placeholders Hydration)
-- **Endpoint**: `POST /api/proxy/unmask`
-- **Controller**: `proxyController.js`
+- **Endpoint**: POST /api/proxy/unmask
+- **Controller**: proxyController.js
 - **Request Body**:
   ```json
   {
@@ -102,8 +103,8 @@ All backend network operations are managed by the gateway server running locally
   }
   ```
 
-### 3. Intercept & Analyze LLM Response (Copyleft Verification)
-- **Endpoint**: `POST /api/proxy/chat`
+### 3. Intercept and Analyze LLM Response (Copyleft Verification)
+- **Endpoint**: POST /api/proxy/chat
 - **Request Body**:
   ```json
   {
@@ -111,21 +112,21 @@ All backend network operations are managed by the gateway server running locally
   }
   ```
 - **Internal Pipeline**:
-  - Routes message to LLM (using Groq `llama3-8b-8192` or similar model).
+  - Routes message to LLM (using Groq llama3-8b-8192 or similar model).
   - Code extracts markdown code blocks.
   - Generates Acorn AST tokens, normalizes identifiers, and sliding-window computes Jaccard-distance similarity scores against Copyleft (GPL v2/v3, AGPL) templates.
-  - If copyleft similarity score $\ge 75\%$, records audit log and prepends a red legal warning banner to the response text.
+  - If copyleft similarity score >= 75%, records audit log and prepends a red legal warning banner to the response text.
 
 ---
 
-## 🛠️ Key Core Implementation Details
+## Key Core Implementation Details
 
 ### 1. Injected Rich-Editor Input Synchronization
-Because modern interfaces like Google Gemini (Quill.js - `.ql-editor`) and ChatGPT (ProseMirror) maintain strict, asynchronous document model states, direct DOM assignments (like setting `innerHTML = text`) are immediately overwritten and reverted during the host frameworks' reconciliation loops.
+Because modern interfaces like Google Gemini (Quill.js - .ql-editor) and ChatGPT (ProseMirror) maintain strict, asynchronous document model states, direct DOM assignments (like setting innerHTML = text) are immediately overwritten and reverted during the host frameworks' reconciliation loops.
 
-PromptShield solves this with an **asynchronous DOM mutation + delayed event dispatch** pattern in [content.js](file:///c:/Users/abhay/OneDrive/Desktop/heritage/promptshield-chrome-extension/content.js#L141-L188):
+PromptShield solves this with an asynchronous DOM mutation + delayed event dispatch pattern in content.js:
 ```javascript
-// 1. Build and insert well-formed <p> elements (which Quill & ProseMirror require)
+// 1. Build and insert well-formed <p> elements (which Quill and ProseMirror require)
 const paragraphHTML = lines.map(line => `<p>${line ? escapeHtml(line) : '<br>'}</p>`).join('');
 el.innerHTML = paragraphHTML;
 
@@ -144,10 +145,19 @@ setTimeout(() => {
     el.dispatchEvent(new Event('change', { bubbles: true }));
 }, 50);
 ```
-*Note: This 50ms delay is vital. It allows the editors' asynchronous `MutationObserver` routines to detect the clean `<p>` structures, parse them into their internal models, and lock them in before the input/change bubbles trigger the framework's synchronous data reconciliation.*
+*Note: This 50ms delay is vital. It allows the editors' asynchronous MutationObserver routines to detect the clean `<p>` structures, parse them into their internal models, and lock them in before the input/change bubbles trigger the framework's synchronous data reconciliation.*
 
 ### 2. Copyleft Signature Analysis Mechanics
-- **SPDX Scanning**: Proactively checks file comments for standard notices (e.g. `SPDX-License-Identifier: GPL-3.0-only`).
-- **Acorn Tokenizer**: Generates sequential JS/TS syntax nodes, stripping naming details to form a structural signature (e.g. `[VariableDeclaration, Identifier, VariableDeclarator, Literal, BinaryExpression]`).
-- **Bigram Slider**: Splits signatures into overlapping bigrams (e.g. `[[VarDec, Ident], [Ident, VarDecl], [VarDecl, Lit]]`).
-- **Jaccard Similarity Check**: Calculates intersection ratios against known GPL codebase profiles. Score $\ge 75\%$ is audited as high compliance risk.
+- **SPDX Scanning**: Proactively checks file comments for standard notices (e.g. SPDX-License-Identifier: GPL-3.0-only).
+- **Acorn Tokenizer**: Generates sequential JS/TS syntax nodes, stripping naming details to form a structural signature (e.g. [VariableDeclaration, Identifier, VariableDeclarator, Literal, BinaryExpression]).
+- **Bigram Slider**: Splits signatures into overlapping bigrams (e.g. [[VarDec, Ident], [Ident, VarDecl], [VarDecl, Lit]]).
+- **Jaccard Similarity Check**: Calculates intersection ratios against known GPL codebase profiles. Score >= 75% is audited as high compliance risk.
+
+---
+
+## Standalone Core Testing Frameworks
+
+The system includes multiple robust test harnesses:
+1. **test-sdk.js**: Validates regex boundaries, pattern triggers, secret redactions, character rules, and validation limits in the SDK library.
+2. **test-edge-cases.js**: Tests high-stress situations, unicode compliance, and invalid payloads inside the core matching expressions.
+3. **code-analysis.test.js**: Tests the backend AST-extraction matching loops, including Acorn AST mapping, multi-language tokenization, structural bigram extraction, Jaccard distance calculators, and SPDX licensing comment detections.
