@@ -1,6 +1,6 @@
 const AuditLog = require("../models/AuditLog");
 const detectRisk = require("../services/riskService");
-const maskSensitiveData = require("../services/maskingService");
+const { maskSensitiveData, unmaskSensitiveData } = require("../services/maskingService");
 const detectPromptInjection = require("../services/promptInjectionService");
 const { callGroqAPI } = require("../services/openaiService");
 
@@ -15,6 +15,7 @@ exports.getHealth = (req, res) => {
 exports.chatProxy = async (req, res) => {
     try {
         const { prompt } = req.body;
+        const sessionId = req.body.sessionId || req.headers['x-session-id'] || 'session-global';
 
         // Validate prompt
         if (!prompt) {
@@ -48,8 +49,8 @@ exports.chatProxy = async (req, res) => {
             });
         }
 
-        // Mask sensitive data
-        const sanitizedPrompt = maskSensitiveData(prompt);
+        // Mask sensitive data (Regex + Local LLM dual-layer engine)
+        const sanitizedPrompt = await maskSensitiveData(sessionId, prompt);
         console.log("Sanitized Prompt:", sanitizedPrompt);
 
         let blocked = false;
@@ -57,7 +58,7 @@ exports.chatProxy = async (req, res) => {
             blocked = true;
         }
 
-        // Create audit log
+        // Create audit log (saves sanitized prompt for perfect compliance)
         await AuditLog.create({
             originalPrompt: prompt,
             sanitizedPrompt: sanitizedPrompt,
@@ -69,12 +70,15 @@ exports.chatProxy = async (req, res) => {
         // Call Groq API
         const aiResponse = await callGroqAPI(sanitizedPrompt);
 
+        // Unmask the response before sending to user (replaces [omni-*] back with real values)
+        const restoredResponse = unmaskSensitiveData(sessionId, aiResponse);
+
         res.json({
             success: true,
             riskScore: riskAnalysis.riskScore,
             detected: riskAnalysis.detected,
             sanitizedPrompt,
-            aiResponse: aiResponse
+            aiResponse: restoredResponse
         });
 
     } catch (error) {
