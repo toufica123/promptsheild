@@ -52,6 +52,8 @@ function injectShieldStyle() {
     style.textContent = `
         .promptshield-btn {
             position: absolute;
+            right: 48px;
+            bottom: 12px;
             z-index: 999999;
             background: rgba(18, 18, 18, 0.85);
             border: 1px solid rgba(245, 197, 24, 0.4);
@@ -167,22 +169,16 @@ function renderFloatingShield() {
     button.className = 'promptshield-btn';
     button.innerHTML = SHIELD_SVG;
     button.title = 'Click to Mask Outbound Secrets via PromptShield';
-    document.body.appendChild(button);
-    activeShieldButton = button;
 
-    // Reposition floating button relative to target input
-    function positionButton() {
-        const rect = inputArea.getBoundingClientRect();
-        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-
-        // Align to top-right inside or outside the text area
-        button.style.left = `${rect.right + scrollLeft - 44}px`;
-        button.style.top = `${rect.top + scrollTop + 6}px`;
+    // Mount locally inside the parent container of the textarea so it anchors perfectly in the corner
+    const parent = inputArea.parentElement;
+    if (parent) {
+        parent.style.position = 'relative';
+        parent.appendChild(button);
+    } else {
+        document.body.appendChild(button);
     }
-
-    positionButton();
-    window.addEventListener('resize', positionButton);
+    activeShieldButton = button;
 
     // Click handler: Intercept prompt, fetch masked state from background script worker
     button.addEventListener('click', async () => {
@@ -226,7 +222,6 @@ function renderFloatingShield() {
             button.remove();
             activeShieldButton = null;
             clearInterval(cleanupInterval);
-            window.removeEventListener('resize', positionButton);
         }
     }, 1500);
 }
