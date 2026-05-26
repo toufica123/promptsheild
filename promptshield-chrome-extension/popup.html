@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PromptShield AI Dashboard</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="ps-popup">
+        <!-- Sleek Header -->
+        <header class="ps-header">
+            <div class="ps-logo-group">
+                <span class="ps-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 22C12 22 20 18 20 12V5L12 2L4 5V12C4 18 12 22 12 22Z" stroke="#F5C518" stroke-width="2" stroke-linejoin="round" fill="rgba(245,197,24,0.2)"/>
+                        <path d="M9 12L11 14L15 10" stroke="#F5C518" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <h1>PromptShield<span class="ps-copyright">&copy;</span></h1>
+            </div>
+            <span class="ps-version">v1.0.0</span>
+        </header>
+
+        <hr class="ps-divider">
+
+        <!-- Glowing Health HUD -->
+        <section class="ps-hud">
+            <div class="ps-status-card">
+                <div class="ps-status-info">
+                    <p class="ps-label">GATEWAY CONNECTION</p>
+                    <h3 id="health-status">CONNECTING...</h3>
+                </div>
+                <span id="health-pulse" class="ps-pulse gray"></span>
+            </div>
+        </section>
+
+        <!-- Configuration Toggle -->
+        <section class="ps-controls">
+            <div class="ps-toggle-card">
+                <span class="ps-toggle-title">Shield Protection</span>
+                <label class="ps-switch">
+                    <input type="checkbox" id="shield-toggle" checked>
+                    <span class="ps-slider"></span>
+                </label>
+            </div>
+        </section>
+
+        <!-- Compliance & Protection Stats Grid -->
+        <section class="ps-stats">
+            <p class="ps-section-title">SECURITY STATISTICS</p>
+            <div class="ps-grid">
+                <div class="ps-stat-card">
+                    <div class="ps-stat-value" id="stat-emails">0</div>
+                    <div class="ps-stat-label">Emails Redacted</div>
+                </div>
+                <div class="ps-stat-card">
+                    <div class="ps-stat-value" id="stat-keys">0</div>
+                    <div class="ps-stat-label">API Keys Shielded</div>
+                </div>
+                <div class="ps-stat-card">
+                    <div class="ps-stat-value" id="stat-pii">0</div>
+                    <div class="ps-stat-label">PII Protected</div>
+                </div>
+                <div class="ps-stat-card danger">
+                    <div class="ps-stat-value" id="stat-compliance">0</div>
+                    <div class="ps-stat-label">License Warnings</div>
+                </div>
+            </div>
+        </section>
+
+        <hr class="ps-divider">
+
+        <!-- Footer Control panel -->
+        <footer class="ps-footer">
+            <button class="ps-btn" id="btn-reset">Reset Statistics</button>
+            <p class="ps-desc">Local gateway firewall active on port 5000.</p>
+        </footer>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

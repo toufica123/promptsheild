@@ -1,0 +1,310 @@
+/**
+ * ============================================================
+ *  PromptShield AI — Component 5: Popup Styling
+ *  File: popup.css (Chrome Extension Manifest V3)
+ * ============================================================
+ */
+
+:root {
+    --bg-color: #0D0D0D;
+    --card-bg: rgba(26, 26, 26, 0.6);
+    --border-color: rgba(245, 197, 24, 0.2);
+    --accent-color: #F5C518;
+    --accent-glow: rgba(245, 197, 24, 0.35);
+    --text-primary: #FFFFFF;
+    --text-secondary: #A0A0A0;
+    --success-color: #16A34A;
+    --success-glow: rgba(22, 163, 74, 0.35);
+    --danger-color: #EF4444;
+    --danger-glow: rgba(239, 68, 68, 0.35);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    width: 320px;
+    background-color: var(--bg-color);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-primary);
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+.ps-popup {
+    padding: 18px;
+    background: radial-gradient(circle at 50% -20%, var(--accent-glow) 0%, transparent 60%);
+}
+
+/* Header Styling */
+.ps-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 4px;
+}
+
+.ps-logo-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ps-logo-group h1 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.ps-copyright {
+    color: var(--accent-color);
+    font-size: 11px;
+    vertical-align: super;
+    margin-left: 2px;
+}
+
+.ps-version {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
+
+.ps-divider {
+    border: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--border-color), transparent);
+    margin: 12px 0;
+}
+
+/* Health HUD Card */
+.ps-status-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.ps-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+#health-status {
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 2px;
+    letter-spacing: -0.01em;
+}
+
+/* Glowing Health Pulse Indicator */
+.ps-pulse {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    position: relative;
+}
+
+.ps-pulse.online {
+    background-color: var(--success-color);
+    box-shadow: 0 0 10px var(--success-color);
+    animation: pulse-green 2s infinite;
+}
+
+.ps-pulse.offline {
+    background-color: var(--danger-color);
+    box-shadow: 0 0 10px var(--danger-color);
+    animation: pulse-red 2s infinite;
+}
+
+.ps-pulse.gray {
+    background-color: var(--text-secondary);
+    box-shadow: 0 0 10px rgba(160, 160, 160, 0.3);
+}
+
+@keyframes pulse-green {
+    0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); }
+    70% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+    70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Controls section & Switches */
+.ps-controls {
+    margin-top: 10px;
+}
+
+.ps-toggle-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ps-toggle-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* Sleek toggle Switch */
+.ps-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+
+.ps-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.ps-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #374151;
+    transition: .3s;
+    border-radius: 34px;
+}
+
+.ps-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .ps-slider {
+    background-color: var(--accent-color);
+}
+
+input:focus + .ps-slider {
+    box-shadow: 0 0 1px var(--accent-color);
+}
+
+input:checked + .ps-slider:before {
+    transform: translateX(16px);
+}
+
+/* Statistics Grid */
+.ps-stats {
+    margin-top: 14px;
+}
+
+.ps-section-title {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+}
+
+.ps-grid {
+    display: grid;
+    grid-template-cols: 1fr 1fr;
+    gap: 8px;
+}
+
+.ps-stat-card {
+    background: var(--card-bg);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+    transition: all 0.25s ease;
+}
+
+.ps-stat-card:hover {
+    border-color: var(--border-color);
+    box-shadow: 0 4px 12px rgba(245, 197, 24, 0.05);
+}
+
+.ps-stat-card.danger {
+    background: rgba(239, 68, 68, 0.04);
+}
+
+.ps-stat-card.danger:hover {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.05);
+}
+
+.ps-stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent-color);
+    font-family: monospace;
+}
+
+.ps-stat-card.danger .ps-stat-value {
+    color: var(--danger-color);
+}
+
+.ps-stat-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* Footer panel button */
+.ps-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.ps-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ps-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--text-secondary);
+}
+
+.ps-btn:active {
+    transform: scale(0.98);
+}
+
+.ps-desc {
+    font-size: 9px;
+    color: var(--text-secondary);
+}

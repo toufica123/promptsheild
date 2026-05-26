@@ -123,6 +123,44 @@ exports.chatProxy = async (req, res) => {
     }
 };
 
+// Mask only endpoint for external clients (like Chrome Extensions)
+exports.maskOnly = async (req, res) => {
+    try {
+        const { prompt, sessionId } = req.body;
+        if (!prompt) {
+            return res.status(400).json({ error: "Prompt is required" });
+        }
+        const sId = sessionId || 'session-global';
+        const masked = await maskSensitiveData(sId, prompt);
+        
+        res.json({
+            success: true,
+            maskedPrompt: masked
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// Unmask only endpoint for external clients (like Chrome Extensions)
+exports.unmaskOnly = async (req, res) => {
+    try {
+        const { text, sessionId } = req.body;
+        if (!text) {
+            return res.status(400).json({ error: "Text is required" });
+        }
+        const sId = sessionId || 'session-global';
+        const unmasked = unmaskSensitiveData(sId, text);
+        
+        res.json({
+            success: true,
+            unmaskedText: unmasked
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // Get audit logs
 exports.getLogs = async (req, res) => {
     try {
