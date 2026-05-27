@@ -58,6 +58,44 @@ const SHIELD_SVG_SUCCESS = `
 `;
 
 const localPlaceholderMap = new Map();
+const requestTokenStore = new Map();
+let activeRequestId = null;
+
+const RAW_SECRET_PATTERNS = [
+    /\bAIzaSy[A-Za-z0-9_-]{20,}\b/,
+    /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/,
+    /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{20,}\b/,
+    /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/,
+    /\bomni-gcp-[A-Za-z0-9_-]{6,}\b/
+];
+
+function createRequestId() {
+    try {
+        return crypto.randomUUID();
+    } catch (err) {
+        return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+}
+
+function cleanupExpiredRequestMaps() {
+    const now = Date.now();
+    const ttlMs = 30 * 60 * 1000;
+
+    for (const [requestId, entry] of requestTokenStore) {
+        if (now - entry.timestamp > ttlMs) {
+            requestTokenStore.delete(requestId);
+        }
+    }
+}
+
+function containsSensitiveData(text) {
+    if (typeof text !== 'string') return false;
+
+    // Placeholders are safe outbound tokens; remove them before checking for
+    // raw secrets so [omni-gcp-*] does not look like an unmasked key.
+    const withoutPlaceholders = text.replace(/\[omni-[^\]]+\]/gi, '');
+    return RAW_SECRET_PATTERNS.some((pattern) => pattern.test(withoutPlaceholders));
+}
 
 function mergePlaceholderMap(placeholderMap = {}) {
     if (!placeholderMap || typeof placeholderMap !== 'object') return;
@@ -73,17 +111,54 @@ function mergePlaceholderMap(placeholderMap = {}) {
     }
 }
 
-function restoreMaskedTokens(responseText, placeholderMap = localPlaceholderMap) {
-    if (typeof responseText !== 'string' || placeholderMap.size === 0) {
-        return responseText;
+function registerRequestMap(placeholderMap = {}) {
+    const requestId = createRequestId();
+    const map = new Map();
+
+    for (const [placeholder, original] of Object.entries(placeholderMap || {})) {
+        if (typeof placeholder === 'string' && typeof original === 'string') {
+            map.set(placeholder, original);
+        }
     }
 
-    let restored = responseText;
+    requestTokenStore.set(requestId, {
+        requestId,
+        placeholderMap: map,
+        timestamp: Date.now(),
+        tabId: sessionTabId
+    });
+
+    activeRequestId = requestId;
+    cleanupExpiredRequestMaps();
+    return requestId;
+}
+
+function replaceFromPlaceholderMap(text, placeholderMap) {
+    if (typeof text !== 'string' || !placeholderMap || placeholderMap.size === 0) {
+        return text;
+    }
+
+    let restored = text;
     for (const [placeholder, original] of placeholderMap) {
         restored = restored.replaceAll(placeholder, original);
     }
-
     return restored;
+}
+
+function restoreMaskedTokens(responseText, placeholderMap = null) {
+    if (typeof responseText !== 'string') {
+        return responseText;
+    }
+
+    if (placeholderMap) {
+        return replaceFromPlaceholderMap(responseText, placeholderMap);
+    }
+
+    const activeMap = requestTokenStore.get(activeRequestId)?.placeholderMap;
+    const activeRestored = replaceFromPlaceholderMap(responseText, activeMap);
+    if (activeRestored !== responseText) return activeRestored;
+
+    return replaceFromPlaceholderMap(responseText, localPlaceholderMap);
 }
 
 /**
@@ -247,6 +322,108 @@ function getInputValue(el) {
     return '';
 }
 
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function setCaretAtEnd(el) {
+    try {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    } catch (err) {
+        console.warn('[PromptShield] Failed to set editor caret:', err);
+    }
+}
+
+function dispatchEditorSyncEvents(el, text) {
+    try {
+        el.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'insertText',
+            data: text
+        }));
+    } catch (err) {
+        // Some pages disallow synthetic beforeinput. The input/change fallback
+        // below is still required for framework state sync.
+    }
+
+    el.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: text
+    }));
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+}
+
+async function writeTextToEditor(el, text) {
+    el.focus();
+
+    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+        const nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+        if (nativeSetter) {
+            nativeSetter.call(el, text);
+        } else {
+            el.value = text;
+        }
+        dispatchEditorSyncEvents(el, text);
+    } else if (el.isContentEditable) {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        const inserted = document.execCommand('insertText', false, text);
+        if (!inserted || getInputValue(el) !== text) {
+            el.textContent = text;
+        }
+
+        setCaretAtEnd(el);
+        dispatchEditorSyncEvents(el, text);
+    }
+
+    await nextFrame();
+    await wait(75);
+    dispatchEditorSyncEvents(el, text);
+    await wait(75);
+
+    return getInputValue(el);
+}
+
+async function updateAndVerifyMaskedInput(el, maskedText) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const actualText = await writeTextToEditor(el, maskedText);
+        if (actualText === maskedText && !containsSensitiveData(actualText)) {
+            console.log('[PromptShield] Input replaced successfully');
+            console.log('[PromptShield] DOM verified before submit');
+            return true;
+        }
+    }
+
+    const finalText = getInputValue(el);
+    if (containsSensitiveData(finalText)) {
+        console.error('[PromptShield] DOM still contains sensitive data. Blocking submit.');
+    } else {
+        console.error('[PromptShield] DOM verification failed. Blocking submit.');
+    }
+
+    return false;
+}
+
 /**
  * interceptAndMask - Pre-submit Gemini interception path.
  *
@@ -390,9 +567,18 @@ function interceptAndMask() {
             }
 
             mergePlaceholderMap(response.placeholderMap);
+            registerRequestMap(response.placeholderMap);
+            console.log('[PromptShield] Sensitive entities detected');
             console.log('[PromptShield] Masked prompt sent');
+
+            if (containsSensitiveData(response.maskedPrompt)) {
+                console.error('[PromptShield] Masked prompt still contains sensitive data. Blocking submit.');
+                return;
+            }
+
             lastMaskedPrompt = response.maskedPrompt;
-            syncMaskedTextIntoGemini(textbox, response.maskedPrompt);
+            const verified = await updateAndVerifyMaskedInput(textbox, response.maskedPrompt);
+            if (!verified) return;
 
             // Give Gemini/React time to consume the synthetic input/change events
             // and update its cached component state before replaying the send.
@@ -406,12 +592,13 @@ function interceptAndMask() {
 
             replayingSubmit = true;
             sendButton.click();
+            console.log('[PromptShield] Masked prompt submitted');
 
             // Keep the bypass flag alive long enough for the replayed click and
             // any follow-up form submit event to finish before intercepting again.
             setTimeout(() => {
                 replayingSubmit = false;
-            }, 250);
+            }, 1000);
         } catch (err) {
             console.error('[PromptShield] Pre-submit interception failed:', err);
         } finally {
@@ -518,7 +705,7 @@ function renderFloatingShield() {
         
         const rawText = getInputValue(activeInput);
         console.log('[PromptShield] Active Target Input Area Element:', activeInput);
-        console.log('[PromptShield] Retrieved prompt text:', rawText);
+        console.log('[PromptShield] Retrieved prompt text length:', rawText.length);
         
         if (!rawText.trim()) {
             console.warn('[PromptShield] Text area is empty. Ignoring click.');
@@ -540,7 +727,7 @@ function renderFloatingShield() {
                 action: 'mask',
                 prompt: rawText,
                 sessionId: sessionTabId
-            }, (response) => {
+            }, async (response) => {
                 const lastError = chrome.runtime.lastError;
                 if (lastError) {
                     console.error('[PromptShield] Runtime communication error:', lastError);
@@ -552,8 +739,20 @@ function renderFloatingShield() {
                 console.log('[PromptShield] Masking response received:', response);
                 if (response && response.success) {
                     mergePlaceholderMap(response.placeholderMap);
+                    registerRequestMap(response.placeholderMap);
+                    console.log('[PromptShield] Sensitive entities detected');
+                    console.log('[PromptShield] Masked prompt sent');
+                    if (containsSensitiveData(response.maskedPrompt)) {
+                        button.innerHTML = SHIELD_SVG;
+                        console.error('[PromptShield] Masked prompt still contains sensitive data. Blocking submit.');
+                        return;
+                    }
                     console.log('[PromptShield] Swapping text in input with:', response.maskedPrompt);
-                    updateInputValue(activeInput, response.maskedPrompt);
+                    const verified = await updateAndVerifyMaskedInput(activeInput, response.maskedPrompt);
+                    if (!verified) {
+                        button.innerHTML = SHIELD_SVG;
+                        return;
+                    }
                     button.innerHTML = SHIELD_SVG_SUCCESS;
                     button.classList.add('success');
 
