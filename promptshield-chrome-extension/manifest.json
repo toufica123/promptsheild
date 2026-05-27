@@ -29,6 +29,7 @@
         "https://*.deepseek.com/*"
       ],
       "js": [
+        "token-pipeline.js",
         "content.js"
       ],
       "run_at": "document_end"

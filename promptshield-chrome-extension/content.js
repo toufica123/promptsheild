@@ -3,6 +3,12 @@
  *  PromptShield AI — Component 3: Injected Content Script
  *  File: content.js (Chrome Extension Manifest V3)
  * ============================================================
+ * 
+ * ENTERPRISE TOKEN LIFECYCLE PIPELINE
+ * - Deterministic masking/unmasking with state tracking
+ * - Per-request token isolation and cleanup
+ * - Idempotent restoration with failsafe protection
+ * - Comprehensive audit trail and debugging
  */
 
 'use strict';
@@ -27,8 +33,25 @@ function getStableSessionTabId() {
 const sessionTabId = getStableSessionTabId();
 console.log(`PromptShield active in tab. Session ID: ${sessionTabId}`);
 
-// Injected Sleek Floating Shield Overlay
-let activeShieldButton = null;
+// ─────────────────────────────────────────────────────────────
+// ENTERPRISE TOKEN PIPELINE INITIALIZATION
+// ─────────────────────────────────────────────────────────────
+
+const RAW_SECRET_PATTERNS = [
+    /\bAIzaSy[A-Za-z0-9_-]{20,}\b/,
+    /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/,
+    /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{20,}\b/,
+    /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/,
+    /\bomni-gcp-[A-Za-z0-9_-]{6,}\b/
+];
+
+let tokenPipeline = null;
+try {
+    tokenPipeline = new TokenPipeline(RAW_SECRET_PATTERNS);
+    console.log('[PromptShield] Enterprise token pipeline initialized');
+} catch (err) {
+    console.error('[PromptShield] Failed to initialize token pipeline:', err);
+}
 
 const SHIELD_SVG = `
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -57,17 +80,17 @@ const SHIELD_SVG_SUCCESS = `
 </svg>
 `;
 
+// Floating Shield UI reference
+let activeShieldButton = null;
+
+// ─────────────────────────────────────────────────────────────
+// LEGACY COMPATIBILITY LAYER (for gradual migration)
+// ─────────────────────────────────────────────────────────────
+// These maintain backward compatibility while the pipeline handles core logic
+
 const localPlaceholderMap = new Map();
 const requestTokenStore = new Map();
 let activeRequestId = null;
-
-const RAW_SECRET_PATTERNS = [
-    /\bAIzaSy[A-Za-z0-9_-]{20,}\b/,
-    /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/,
-    /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{20,}\b/,
-    /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/,
-    /\bomni-gcp-[A-Za-z0-9_-]{6,}\b/
-];
 
 function createRequestId() {
     try {
@@ -91,8 +114,12 @@ function cleanupExpiredRequestMaps() {
 function containsSensitiveData(text) {
     if (typeof text !== 'string') return false;
 
-    // Placeholders are safe outbound tokens; remove them before checking for
-    // raw secrets so [omni-gcp-*] does not look like an unmasked key.
+    // Use pipeline verifier if available
+    if (tokenPipeline && tokenPipeline.verifier) {
+        return tokenPipeline.verifier.containsSensitiveData(text);
+    }
+
+    // Fallback to direct pattern checking
     const withoutPlaceholders = text.replace(/\[omni-[^\]]+\]/gi, '');
     return RAW_SECRET_PATTERNS.some((pattern) => pattern.test(withoutPlaceholders));
 }
@@ -150,6 +177,25 @@ function restoreMaskedTokens(responseText, placeholderMap = null) {
         return responseText;
     }
 
+    // Use pipeline restoration engine if available
+    if (tokenPipeline && tokenPipeline.restorationEngine) {
+        try {
+            if (placeholderMap) {
+                return tokenPipeline.restorationEngine.restoreMaskedTokens(responseText, placeholderMap);
+            }
+
+            const activeMap = requestTokenStore.get(activeRequestId)?.placeholderMap;
+            if (activeMap) {
+                return tokenPipeline.restorationEngine.restoreMaskedTokens(responseText, activeMap);
+            }
+
+            return tokenPipeline.restorationEngine.restoreMaskedTokens(responseText, localPlaceholderMap);
+        } catch (err) {
+            console.warn('[PromptShield] Restoration engine error, falling back:', err);
+        }
+    }
+
+    // Fallback to legacy restoration logic
     if (placeholderMap) {
         return replaceFromPlaceholderMap(responseText, placeholderMap);
     }
@@ -552,33 +598,96 @@ function interceptAndMask() {
         cancelOriginalSubmit(event);
         maskingInProgress = true;
 
+        let requestId = null;
         try {
+            // PIPELINE STAGE 1: Initialize request lifecycle
+            requestId = createRequestId();
+            if (tokenPipeline) {
+                try {
+                    tokenPipeline.initializeRequest(requestId);
+                    tokenPipeline.beginMasking(requestId, rawText);
+                } catch (err) {
+                    console.error('[PromptShield] Pipeline initialization error:', err);
+                }
+            }
+
             console.log('[PromptShield] Intercepted Gemini submit before framework handlers.');
 
             const response = await sendRuntimeMessage({
                 action: 'mask',
                 prompt: rawText,
-                sessionId: sessionTabId
+                sessionId: sessionTabId,
+                requestId: requestId
             });
 
             if (!response || !response.success || typeof response.maskedPrompt !== 'string') {
                 console.error('[PromptShield] Masking failed; refusing to send raw prompt:', response?.error);
+                if (requestId && tokenPipeline) {
+                    const lifecycle = tokenPipeline.getLifecycleState(requestId);
+                    if (lifecycle) {
+                        lifecycle.addError(new TokenPipelineError('Masking failed', 'MASKING_REQUEST_FAILED'));
+                    }
+                }
                 return;
             }
 
             mergePlaceholderMap(response.placeholderMap);
             registerRequestMap(response.placeholderMap);
             console.log('[PromptShield] Sensitive entities detected');
-            console.log('[PromptShield] Masked prompt sent');
+
+            // PIPELINE STAGE 2: Store masking result
+            if (requestId && tokenPipeline) {
+                try {
+                    tokenPipeline.storeMaskingResult(requestId, response.maskedPrompt, response.placeholderMap);
+                } catch (err) {
+                    console.error('[PromptShield] Pipeline masking result storage error:', err);
+                    return;
+                }
+            }
 
             if (containsSensitiveData(response.maskedPrompt)) {
                 console.error('[PromptShield] Masked prompt still contains sensitive data. Blocking submit.');
+                if (requestId && tokenPipeline) {
+                    const lifecycle = tokenPipeline.getLifecycleState(requestId);
+                    if (lifecycle) {
+                        lifecycle.addError(new TokenPipelineError('Masked prompt contains sensitive data', 'MASKED_PROMPT_UNSAFE'));
+                    }
+                }
                 return;
             }
 
             lastMaskedPrompt = response.maskedPrompt;
             const verified = await updateAndVerifyMaskedInput(textbox, response.maskedPrompt);
-            if (!verified) return;
+            if (!verified) {
+                if (requestId && tokenPipeline) {
+                    const lifecycle = tokenPipeline.getLifecycleState(requestId);
+                    if (lifecycle) {
+                        lifecycle.addError(new TokenPipelineError('Input verification failed', 'INPUT_VERIFICATION_FAILED'));
+                    }
+                }
+                return;
+            }
+
+            // PIPELINE STAGE 3: Verify DOM before submission
+            if (requestId && tokenPipeline) {
+                try {
+                    await tokenPipeline.verifyInputBeforeSubmission(requestId, textbox);
+                } catch (err) {
+                    console.error('[PromptShield] Critical: DOM verification failed, blocking submission:', err);
+                    return;
+                }
+            }
+
+            // PIPELINE STAGE 4: Mark submission
+            if (requestId && tokenPipeline) {
+                try {
+                    tokenPipeline.markSubmission(requestId);
+                    activeRequestId = requestId;
+                } catch (err) {
+                    console.error('[PromptShield] Cannot mark submission:', err);
+                    return;
+                }
+            }
 
             // Give Gemini/React time to consume the synthetic input/change events
             // and update its cached component state before replaying the send.
@@ -601,6 +710,12 @@ function interceptAndMask() {
             }, 1000);
         } catch (err) {
             console.error('[PromptShield] Pre-submit interception failed:', err);
+            if (requestId && tokenPipeline) {
+                const lifecycle = tokenPipeline.getLifecycleState(requestId);
+                if (lifecycle) {
+                    lifecycle.addError(err instanceof TokenPipelineError ? err : new TokenPipelineError(err.message, 'UNKNOWN_INTERCEPTION_ERROR'));
+                }
+            }
         } finally {
             maskingInProgress = false;
         }
@@ -819,6 +934,18 @@ function containsPlaceholder(text) {
 function requestUnmaskText(rawText, onUnmasked) {
     if (!containsPlaceholder(rawText)) return;
 
+    // PIPELINE STAGE 5 & 6: Response received and restoration
+    if (activeRequestId && tokenPipeline) {
+        try {
+            const lifecycle = tokenPipeline.getLifecycleState(activeRequestId);
+            if (lifecycle && lifecycle.stage === 'SUBMITTED') {
+                tokenPipeline.markResponseReceived(activeRequestId);
+            }
+        } catch (err) {
+            console.warn('[PromptShield] Could not mark response received:', err);
+        }
+    }
+
     const locallyRestored = restoreMaskedTokens(rawText);
     if (locallyRestored !== rawText) {
         console.log('[PromptShield] AI response intercepted');
@@ -826,6 +953,16 @@ function requestUnmaskText(rawText, onUnmasked) {
         unmaskCache.set(rawText, locallyRestored);
         onUnmasked(locallyRestored);
         console.log('[PromptShield] Final restored response injected');
+        
+        // PIPELINE STAGE 8 & 9: Restoration completion
+        if (activeRequestId && tokenPipeline) {
+            try {
+                tokenPipeline.completeRestoration(activeRequestId);
+                activeRequestId = null;
+            } catch (err) {
+                console.warn('[PromptShield] Could not complete restoration:', err);
+            }
+        }
         return;
     }
 
@@ -833,6 +970,14 @@ function requestUnmaskText(rawText, onUnmasked) {
         const cachedText = unmaskCache.get(rawText);
         if (cachedText !== rawText) {
             onUnmasked(cachedText);
+            if (activeRequestId && tokenPipeline) {
+                try {
+                    tokenPipeline.completeRestoration(activeRequestId);
+                    activeRequestId = null;
+                } catch (err) {
+                    console.warn('[PromptShield] Could not complete restoration:', err);
+                }
+            }
         }
         return;
     }
@@ -843,7 +988,8 @@ function requestUnmaskText(rawText, onUnmasked) {
     chrome.runtime.sendMessage({
         action: 'unmask',
         text: rawText,
-        sessionId: sessionTabId
+        sessionId: sessionTabId,
+        requestId: activeRequestId
     }, (response) => {
         pendingUnmask.delete(rawText);
 
@@ -853,6 +999,16 @@ function requestUnmaskText(rawText, onUnmasked) {
             unmaskCache.set(rawText, response.unmaskedText);
             onUnmasked(response.unmaskedText);
             console.log('[PromptShield] Final restored response injected');
+            
+            // PIPELINE STAGE 8 & 9: Restoration completion
+            if (activeRequestId && tokenPipeline) {
+                try {
+                    tokenPipeline.completeRestoration(activeRequestId);
+                    activeRequestId = null;
+                } catch (err) {
+                    console.warn('[PromptShield] Could not complete restoration:', err);
+                }
+            }
         }
     });
 }
@@ -915,14 +1071,29 @@ function reactiveUnmaskNode(textNode) {
 
 /**
  * runDomObserver - Monitors the DOM tree continuously for new streaming text nodes.
+ * IDEMPOTENT RESTORATION - Prevents duplicate replacements and stale observations.
  */
 function runDomObserver() {
+    const processedTextNodes = new WeakSet();
+    const processedElements = new WeakSet();
+    let observerActive = true;
+
     const scanSubtree = (root) => {
         if (!root) return;
 
         if (root.nodeType === Node.TEXT_NODE) {
-            reactiveUnmaskNode(root);
-            reactiveUnmaskElement(root.parentElement);
+            // Skip already processed text nodes (idempotent)
+            if (!processedTextNodes.has(root)) {
+                reactiveUnmaskNode(root);
+                processedTextNodes.add(root);
+            }
+            
+            // Also check parent element
+            const parentEl = root.parentElement;
+            if (parentEl && !processedElements.has(parentEl)) {
+                reactiveUnmaskElement(parentEl);
+                processedElements.add(parentEl);
+            }
             return;
         }
 
@@ -931,32 +1102,52 @@ function runDomObserver() {
         }
 
         if (root.nodeType === Node.ELEMENT_NODE) {
-            reactiveUnmaskElement(root);
+            if (!processedElements.has(root)) {
+                reactiveUnmaskElement(root);
+                processedElements.add(root);
+            }
         }
 
         const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
         let textNode;
         while ((textNode = textWalker.nextNode())) {
-            reactiveUnmaskNode(textNode);
+            if (!processedTextNodes.has(textNode)) {
+                reactiveUnmaskNode(textNode);
+                processedTextNodes.add(textNode);
+            }
         }
 
         const elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
         let elementNode;
         while ((elementNode = elementWalker.nextNode())) {
-            reactiveUnmaskElement(elementNode);
+            if (!processedElements.has(elementNode)) {
+                reactiveUnmaskElement(elementNode);
+                processedElements.add(elementNode);
+            }
         }
     };
 
     const observer = new MutationObserver((mutations) => {
+        if (!observerActive) return;
+
         for (const mutation of mutations) {
+            // New nodes: scan for placeholders
             for (const node of mutation.addedNodes) {
-                scanSubtree(node);
+                if (!processedElements.has(node) || node.nodeType === Node.TEXT_NODE) {
+                    scanSubtree(node);
+                }
             }
 
-            // Also check for attribute modifications on already existing streaming text nodes
-            if (mutation.type === 'characterData') {
+            // Character data changes in text nodes
+            if (mutation.type === 'characterData' && !processedTextNodes.has(mutation.target)) {
                 reactiveUnmaskNode(mutation.target);
-                reactiveUnmaskElement(mutation.target.parentElement);
+                processedTextNodes.add(mutation.target);
+                
+                const parentEl = mutation.target.parentElement;
+                if (parentEl && !processedElements.has(parentEl)) {
+                    reactiveUnmaskElement(parentEl);
+                    processedElements.add(parentEl);
+                }
             }
         }
     });
@@ -974,7 +1165,22 @@ function runDomObserver() {
     // Some AI pages stream by replacing nested spans in batches that can briefly
     // split placeholders across nodes. A light polling pass catches those final
     // settled render states without touching the prompt composer.
-    setInterval(() => scanSubtree(document.body), 1500);
+    const pollingInterval = setInterval(() => {
+        if (observerActive) {
+            scanSubtree(document.body);
+        }
+    }, 1500);
+
+    // Cleanup function for graceful shutdown
+    window.addEventListener('beforeunload', () => {
+        observerActive = false;
+        observer.disconnect();
+        clearInterval(pollingInterval);
+        processedTextNodes = null;
+        processedElements = null;
+    });
+
+    console.log('[PromptShield] Idempotent DOM observer initialized');
 }
 
 // ─────────────────────────────────────────────────────────────
