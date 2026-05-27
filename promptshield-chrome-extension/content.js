@@ -538,6 +538,24 @@ function renderFloatingShield() {
 const unmaskCache = new Map();
 
 /**
+ * isPromptInputSurface - Keeps inbound unmasking away from active composer
+ * fields while still allowing response/output areas to be restored.
+ */
+function isPromptInputSurface(el) {
+    if (!el) return false;
+
+    return Boolean(el.closest?.([
+        'input',
+        'textarea',
+        '#prompt-textarea',
+        'div[role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]',
+        '[contenteditable="true"][aria-label*="prompt" i]',
+        '[contenteditable="true"][aria-label*="message" i]',
+        '[contenteditable="true"][data-placeholder*="Ask" i]'
+    ].join(',')));
+}
+
+/**
  * reactiveUnmaskNode - Scans text elements for [omni-*] placeholders, fetches
  * original values from background cache, and dynamically restores them in DOM.
  * 
@@ -548,9 +566,7 @@ function reactiveUnmaskNode(textNode) {
     if (!rawVal || typeof rawVal !== 'string') return;
 
     const parent = textNode.parentElement;
-    if (parent && parent.closest?.(
-        'textarea, input, [contenteditable="true"], div[role="textbox"][aria-multiline="true"]'
-    )) {
+    if (isPromptInputSurface(parent)) {
         return;
     }
 
@@ -558,6 +574,14 @@ function reactiveUnmaskNode(textNode) {
     const placeholderRegex = /\[omni-[a-z0-9-]+\]/gi;
 
     if (placeholderRegex.test(rawVal)) {
+        if (unmaskCache.has(rawVal)) {
+            const cachedText = unmaskCache.get(rawVal);
+            if (cachedText !== rawVal) {
+                textNode.nodeValue = cachedText;
+            }
+            return;
+        }
+
         // Trigger unmask via background fetch
         chrome.runtime.sendMessage({
             action: 'unmask',
@@ -565,8 +589,11 @@ function reactiveUnmaskNode(textNode) {
             sessionId: sessionTabId
         }, (response) => {
             if (response && response.success && response.unmaskedText !== rawVal) {
+                unmaskCache.set(rawVal, response.unmaskedText);
                 // Safely update values inside the DOM node
                 textNode.nodeValue = response.unmaskedText;
+            } else {
+                unmaskCache.set(rawVal, rawVal);
             }
         });
     }
@@ -586,6 +613,14 @@ function reactiveUnmaskNode(textNode) {
  * runDomObserver - Monitors the DOM tree continuously for new streaming text nodes.
  */
 function runDomObserver() {
+    const scanExistingText = () => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+            reactiveUnmaskNode(textNode);
+        }
+    };
+
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
@@ -614,6 +649,10 @@ function runDomObserver() {
         subtree: true,
         characterData: true
     });
+
+    // Catch placeholders that were already rendered before this content script
+    // or before the observer attached.
+    scanExistingText();
 }
 
 // ─────────────────────────────────────────────────────────────
