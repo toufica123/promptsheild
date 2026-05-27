@@ -7,8 +7,24 @@
 
 'use strict';
 
-// Shared Session ID for browser tab context
-const sessionTabId = 'chrome-tab-' + Math.floor(Math.random() * 100000);
+// Shared Session ID for browser tab context. Keep it stable across content
+// script reinjections so backend placeholder mappings remain usable.
+function getStableSessionTabId() {
+    const key = 'promptshieldSessionTabId';
+
+    try {
+        const existing = sessionStorage.getItem(key);
+        if (existing) return existing;
+
+        const created = 'chrome-tab-' + crypto.randomUUID();
+        sessionStorage.setItem(key, created);
+        return created;
+    } catch (err) {
+        return 'chrome-tab-' + Math.floor(Math.random() * 100000);
+    }
+}
+
+const sessionTabId = getStableSessionTabId();
 console.log(`PromptShield active in tab. Session ID: ${sessionTabId}`);
 
 // Injected Sleek Floating Shield Overlay

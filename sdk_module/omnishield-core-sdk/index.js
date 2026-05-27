@@ -190,6 +190,11 @@ class OmniShieldEngine {
      */
     this._sessions = new Map();
 
+    // Fallback fake -> real map used when a browser content script reloads and
+    // asks to unmask with a new tab session id while old Gemini messages remain
+    // on screen. Per-session mappings still win when present.
+    this._globalMappings = new Map();
+
     /**
      * AIScanner instance — shared across all sessions in this engine.
      * The scanner itself is stateless; session state lives in _sessions.
@@ -311,6 +316,7 @@ class OmniShieldEngine {
 
       // Store in session mapping: fake → real (for unmask)
       session.mappings.set(fakeValue, match);
+      this._globalMappings.set(fakeValue, match);
 
       // Store in local reverse map: real → fake (for dedup within this call)
       realToFake.set(dedupeKey, fakeValue);
@@ -374,6 +380,7 @@ class OmniShieldEngine {
       // ── Assign next AI pool placeholder ──
       const fakeValue = this._nextPlaceholder(session, 'ai');
       session.mappings.set(fakeValue, token);
+      this._globalMappings.set(fakeValue, token);
       realToFake.set(key, fakeValue);
 
       // Case-insensitive global replacement
@@ -483,9 +490,12 @@ class OmniShieldEngine {
     }
 
     const session = this._sessions.get(sessionId);
+    const mappings = session && session.mappings.size > 0
+      ? session.mappings
+      : this._globalMappings;
 
     // If no session exists, the response is already clean — return as-is
-    if (!session || session.mappings.size === 0) {
+    if (!mappings || mappings.size === 0) {
       return llmResponse;
     }
 
@@ -493,7 +503,7 @@ class OmniShieldEngine {
 
     // Iterate the mapping and do a global string replacement per token.
     // Map iteration order is insertion order — deterministic in V8.
-    for (const [fakeValue, realValue] of session.mappings) {
+    for (const [fakeValue, realValue] of mappings) {
       // replaceAll is O(n) per iteration, efficient for short strings
       unmasked = unmasked.replaceAll(fakeValue, realValue);
     }
