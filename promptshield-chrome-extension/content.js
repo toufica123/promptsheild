@@ -536,6 +536,8 @@ function renderFloatingShield() {
 // ─────────────────────────────────────────────────────────────
 
 const unmaskCache = new Map();
+const pendingUnmask = new Set();
+const PLACEHOLDER_PATTERN = /\[omni-[a-z0-9-]+\]/i;
 
 /**
  * isPromptInputSurface - Keeps inbound unmasking away from active composer
@@ -555,6 +557,69 @@ function isPromptInputSurface(el) {
     ].join(',')));
 }
 
+function canRewriteTextContainer(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    if (isPromptInputSurface(el)) return false;
+    if (['HTML', 'BODY', 'MAIN', 'SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT'].includes(el.tagName)) return false;
+
+    return true;
+}
+
+function containsPlaceholder(text) {
+    return typeof text === 'string' && PLACEHOLDER_PATTERN.test(text);
+}
+
+function requestUnmaskText(rawText, onUnmasked) {
+    if (!containsPlaceholder(rawText)) return;
+
+    if (unmaskCache.has(rawText)) {
+        const cachedText = unmaskCache.get(rawText);
+        if (cachedText !== rawText) {
+            onUnmasked(cachedText);
+        }
+        return;
+    }
+
+    if (pendingUnmask.has(rawText)) return;
+    pendingUnmask.add(rawText);
+
+    chrome.runtime.sendMessage({
+        action: 'unmask',
+        text: rawText,
+        sessionId: sessionTabId
+    }, (response) => {
+        pendingUnmask.delete(rawText);
+
+        if (response && response.success && response.unmaskedText !== rawText) {
+            unmaskCache.set(rawText, response.unmaskedText);
+            onUnmasked(response.unmaskedText);
+        }
+    });
+}
+
+function reactiveUnmaskElement(el) {
+    if (!canRewriteTextContainer(el)) return;
+
+    const rawText = el.textContent;
+    if (!containsPlaceholder(rawText)) return;
+    if (rawText.length > 4000) return;
+
+    // Prefer text-node replacement when the token is intact in one node. Only
+    // rewrite an element's whole text when Gemini split a placeholder across
+    // nested inline nodes and no child owns the complete token.
+    for (const child of el.children) {
+        if (containsPlaceholder(child.textContent)) {
+            return;
+        }
+    }
+
+    requestUnmaskText(rawText, (unmaskedText) => {
+        if (el.isConnected && !isPromptInputSurface(el) && el.textContent === rawText) {
+            el.textContent = unmaskedText;
+        }
+    });
+}
+
 /**
  * reactiveUnmaskNode - Scans text elements for [omni-*] placeholders, fetches
  * original values from background cache, and dynamically restores them in DOM.
@@ -570,33 +635,12 @@ function reactiveUnmaskNode(textNode) {
         return;
     }
 
-    // Matches [omni-email-1], [omni-oai-Fk9...], [omni-ai-3]
-    const placeholderRegex = /\[omni-[a-z0-9-]+\]/gi;
-
-    if (placeholderRegex.test(rawVal)) {
-        if (unmaskCache.has(rawVal)) {
-            const cachedText = unmaskCache.get(rawVal);
-            if (cachedText !== rawVal) {
-                textNode.nodeValue = cachedText;
-            }
-            return;
+    requestUnmaskText(rawVal, (unmaskedText) => {
+        if (textNode.isConnected && textNode.nodeValue === rawVal && !isPromptInputSurface(parent)) {
+            // Safely update values inside the DOM node
+            textNode.nodeValue = unmaskedText;
         }
-
-        // Trigger unmask via background fetch
-        chrome.runtime.sendMessage({
-            action: 'unmask',
-            text: rawVal,
-            sessionId: sessionTabId
-        }, (response) => {
-            if (response && response.success && response.unmaskedText !== rawVal) {
-                unmaskCache.set(rawVal, response.unmaskedText);
-                // Safely update values inside the DOM node
-                textNode.nodeValue = response.unmaskedText;
-            } else {
-                unmaskCache.set(rawVal, rawVal);
-            }
-        });
-    }
+    });
 
     // Capture and style legal Copyleft/GPL warnings returned from the gateway server
     if (rawVal.includes('PromptShield has detected copyleft licensed code')) {
@@ -613,33 +657,46 @@ function reactiveUnmaskNode(textNode) {
  * runDomObserver - Monitors the DOM tree continuously for new streaming text nodes.
  */
 function runDomObserver() {
-    const scanExistingText = () => {
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    const scanSubtree = (root) => {
+        if (!root) return;
+
+        if (root.nodeType === Node.TEXT_NODE) {
+            reactiveUnmaskNode(root);
+            reactiveUnmaskElement(root.parentElement);
+            return;
+        }
+
+        if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE) {
+            return;
+        }
+
+        if (root.nodeType === Node.ELEMENT_NODE) {
+            reactiveUnmaskElement(root);
+        }
+
+        const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
         let textNode;
-        while ((textNode = walker.nextNode())) {
+        while ((textNode = textWalker.nextNode())) {
             reactiveUnmaskNode(textNode);
+        }
+
+        const elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+        let elementNode;
+        while ((elementNode = elementWalker.nextNode())) {
+            reactiveUnmaskElement(elementNode);
         }
     };
 
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
-                // If it is a Text Node, scan it
-                if (node.nodeType === Node.TEXT_NODE) {
-                    reactiveUnmaskNode(node);
-                } else {
-                    // Traverse children text elements
-                    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
-                    let textNode;
-                    while ((textNode = walker.nextNode())) {
-                        reactiveUnmaskNode(textNode);
-                    }
-                }
+                scanSubtree(node);
             }
 
             // Also check for attribute modifications on already existing streaming text nodes
             if (mutation.type === 'characterData') {
                 reactiveUnmaskNode(mutation.target);
+                reactiveUnmaskElement(mutation.target.parentElement);
             }
         }
     });
@@ -652,7 +709,12 @@ function runDomObserver() {
 
     // Catch placeholders that were already rendered before this content script
     // or before the observer attached.
-    scanExistingText();
+    scanSubtree(document.body);
+
+    // Some AI pages stream by replacing nested spans in batches that can briefly
+    // split placeholders across nodes. A light polling pass catches those final
+    // settled render states without touching the prompt composer.
+    setInterval(() => scanSubtree(document.body), 1500);
 }
 
 // ─────────────────────────────────────────────────────────────
