@@ -206,6 +206,7 @@ class OmniShieldEngine {
     this.unmaskInbound      = this.unmaskInbound.bind(this);
     this.clearSession       = this.clearSession.bind(this);
     this.maskOutboundWithAI = this.maskOutboundWithAI.bind(this);
+    this.getPlaceholderMap  = this.getPlaceholderMap.bind(this);
   }
 
   // ── Internal Helpers ──────────────────────────────────────
@@ -330,6 +331,7 @@ class OmniShieldEngine {
       maskedPrompt,
       tokenCount,
       detectedTypes: [...detectedTypes],
+      placeholderMap: this.getPlaceholderMap(sessionId),
     };
   }
 
@@ -441,7 +443,8 @@ class OmniShieldEngine {
 
     if (!aiAvailable) {
       return { maskedPrompt, tokenCount, aiTokenCount: 0,
-               detectedTypes, aiTokens: [], aiAvailable: false };
+               detectedTypes, aiTokens: [], aiAvailable: false,
+               placeholderMap: this.getPlaceholderMap(sessionId) };
     }
 
     // Scan the RAW prompt so the AI has full context — it sees what the
@@ -461,7 +464,26 @@ class OmniShieldEngine {
       detectedTypes: [...detectedTypes, ...(aiTokens.length ? ['ai_detected'] : [])],
       aiTokens,
       aiAvailable: true,
+      placeholderMap: this.getPlaceholderMap(sessionId),
     };
+  }
+
+  /**
+   * getPlaceholderMap(sessionId)
+   * Returns a plain fake -> real placeholder map for extension clients.
+   * The object is safe to serialize over JSON and keeps restoration local
+   * to the user-visible page instead of depending on a later session lookup.
+   *
+   * @param {string} sessionId
+   * @returns {Record<string, string>}
+   */
+  getPlaceholderMap(sessionId) {
+    const session = this._sessions.get(sessionId);
+    const mappings = session && session.mappings.size > 0
+      ? session.mappings
+      : new Map();
+
+    return Object.fromEntries(mappings);
   }
 
   /**

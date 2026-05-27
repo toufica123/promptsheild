@@ -52,7 +52,8 @@ exports.chatProxy = async (req, res) => {
         }
 
         // Mask sensitive data (Regex + Local LLM dual-layer engine)
-        const sanitizedPrompt = await maskSensitiveData(sessionId, prompt);
+        const maskResult = await maskSensitiveData(sessionId, prompt);
+        const sanitizedPrompt = maskResult.maskedPrompt;
         console.log("Sanitized Prompt:", sanitizedPrompt);
 
         // Call Groq API
@@ -101,7 +102,7 @@ exports.chatProxy = async (req, res) => {
             matchedLicense: matchedLicense,
             licenseSimilarity: licenseSimilarity,
             offendingCode: offendingCode,
-            aiResponse: restoredResponse
+            aiResponse: aiResponse
         });
 
         res.json({
@@ -131,11 +132,12 @@ exports.maskOnly = async (req, res) => {
             return res.status(400).json({ error: "Prompt is required" });
         }
         const sId = sessionId || 'session-global';
-        const masked = await maskSensitiveData(sId, prompt);
+        const maskResult = await maskSensitiveData(sId, prompt);
         
         res.json({
             success: true,
-            maskedPrompt: masked
+            maskedPrompt: maskResult.maskedPrompt,
+            placeholderMap: maskResult.placeholderMap
         });
     } catch (error) {
         res.status(500).json({ error: error.message });

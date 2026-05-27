@@ -23,10 +23,10 @@ try {
  * 
  * @param {string} sessionId Unique tracking identifier for session/user isolation.
  * @param {string} prompt Raw prompt to be redacted.
- * @returns {Promise<string>} Fully obfuscated prompt.
+ * @returns {Promise<{maskedPrompt: string, placeholderMap: Object}>} Fully obfuscated prompt and reversible map.
  */
 async function maskSensitiveData(sessionId, prompt) {
-    if (!prompt) return '';
+    if (!prompt) return { maskedPrompt: '', placeholderMap: {} };
     if (!sessionId) sessionId = 'default-global-session';
 
     if (!engine) {
@@ -35,20 +35,29 @@ async function maskSensitiveData(sessionId, prompt) {
         sanitized = sanitized.replace(/\S+@\S+\.\S+/g, '[Email masked]');
         sanitized = sanitized.replace(/\b\d{10}\b/g, '[Phone masked]');
         sanitized = sanitized.replace(/password/gi, '[Password masked]');
-        return sanitized;
+        return { maskedPrompt: sanitized, placeholderMap: {} };
     }
 
     try {
         const result = await engine.maskOutboundWithAI(sessionId, prompt);
-        return result.maskedPrompt;
+        return {
+            maskedPrompt: result.maskedPrompt,
+            placeholderMap: result.placeholderMap || engine.getPlaceholderMap?.(sessionId) || {}
+        };
     } catch (err) {
         console.error('Error during SDK maskOutboundWithAI, falling back to sync regex engine...', err);
         try {
             const syncResult = engine.maskOutbound(sessionId, prompt);
-            return syncResult.maskedPrompt;
+            return {
+                maskedPrompt: syncResult.maskedPrompt,
+                placeholderMap: syncResult.placeholderMap || engine.getPlaceholderMap?.(sessionId) || {}
+            };
         } catch (syncErr) {
             console.error('Fatal: All masking layers failed. Returning safe placeholder.', syncErr);
-            return '[OmniShield Block: System Obfuscation Error]';
+            return {
+                maskedPrompt: '[OmniShield Block: System Obfuscation Error]',
+                placeholderMap: {}
+            };
         }
     }
 }

@@ -57,6 +57,35 @@ const SHIELD_SVG_SUCCESS = `
 </svg>
 `;
 
+const localPlaceholderMap = new Map();
+
+function mergePlaceholderMap(placeholderMap = {}) {
+    if (!placeholderMap || typeof placeholderMap !== 'object') return;
+
+    for (const [placeholder, original] of Object.entries(placeholderMap)) {
+        if (typeof placeholder === 'string' && typeof original === 'string') {
+            localPlaceholderMap.set(placeholder, original);
+        }
+    }
+
+    if (localPlaceholderMap.size > 0) {
+        console.log('[PromptShield] Placeholder map created:', localPlaceholderMap.size, 'tokens');
+    }
+}
+
+function restoreMaskedTokens(responseText, placeholderMap = localPlaceholderMap) {
+    if (typeof responseText !== 'string' || placeholderMap.size === 0) {
+        return responseText;
+    }
+
+    let restored = responseText;
+    for (const [placeholder, original] of placeholderMap) {
+        restored = restored.replaceAll(placeholder, original);
+    }
+
+    return restored;
+}
+
 /**
  * injectShieldStyle - Injects minimal CSS for the sleek floating shield button overlay.
  */
@@ -360,6 +389,8 @@ function interceptAndMask() {
                 return;
             }
 
+            mergePlaceholderMap(response.placeholderMap);
+            console.log('[PromptShield] Masked prompt sent');
             lastMaskedPrompt = response.maskedPrompt;
             syncMaskedTextIntoGemini(textbox, response.maskedPrompt);
 
@@ -520,6 +551,7 @@ function renderFloatingShield() {
 
                 console.log('[PromptShield] Masking response received:', response);
                 if (response && response.success) {
+                    mergePlaceholderMap(response.placeholderMap);
                     console.log('[PromptShield] Swapping text in input with:', response.maskedPrompt);
                     updateInputValue(activeInput, response.maskedPrompt);
                     button.innerHTML = SHIELD_SVG_SUCCESS;
@@ -588,6 +620,16 @@ function containsPlaceholder(text) {
 function requestUnmaskText(rawText, onUnmasked) {
     if (!containsPlaceholder(rawText)) return;
 
+    const locallyRestored = restoreMaskedTokens(rawText);
+    if (locallyRestored !== rawText) {
+        console.log('[PromptShield] AI response intercepted');
+        console.log('[PromptShield] Restoring placeholders');
+        unmaskCache.set(rawText, locallyRestored);
+        onUnmasked(locallyRestored);
+        console.log('[PromptShield] Final restored response injected');
+        return;
+    }
+
     if (unmaskCache.has(rawText)) {
         const cachedText = unmaskCache.get(rawText);
         if (cachedText !== rawText) {
@@ -607,8 +649,11 @@ function requestUnmaskText(rawText, onUnmasked) {
         pendingUnmask.delete(rawText);
 
         if (response && response.success && response.unmaskedText !== rawText) {
+            console.log('[PromptShield] AI response intercepted');
+            console.log('[PromptShield] Restoring placeholders');
             unmaskCache.set(rawText, response.unmaskedText);
             onUnmasked(response.unmaskedText);
+            console.log('[PromptShield] Final restored response injected');
         }
     });
 }

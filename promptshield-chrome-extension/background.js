@@ -8,6 +8,53 @@
 'use strict';
 
 const GATEWAY_URL = 'http://localhost:5000';
+const PLACEHOLDER_MAP_TTL_MS = 30 * 60 * 1000;
+const sessionPlaceholderMaps = new Map();
+
+function mergePlaceholderMap(sessionId, placeholderMap = {}) {
+    if (!sessionId || !placeholderMap || typeof placeholderMap !== 'object') return;
+
+    const existing = sessionPlaceholderMaps.get(sessionId)?.placeholderMap || {};
+    sessionPlaceholderMaps.set(sessionId, {
+        placeholderMap: { ...existing, ...placeholderMap },
+        expiresAt: Date.now() + PLACEHOLDER_MAP_TTL_MS
+    });
+}
+
+function restoreMaskedTokens(text, placeholderMap = {}) {
+    if (typeof text !== 'string' || !placeholderMap || typeof placeholderMap !== 'object') {
+        return text;
+    }
+
+    let restored = text;
+    for (const [placeholder, original] of Object.entries(placeholderMap)) {
+        if (typeof placeholder === 'string' && typeof original === 'string') {
+            restored = restored.replaceAll(placeholder, original);
+        }
+    }
+    return restored;
+}
+
+function getSessionPlaceholderMap(sessionId) {
+    const entry = sessionPlaceholderMaps.get(sessionId);
+    if (!entry) return {};
+
+    if (entry.expiresAt < Date.now()) {
+        sessionPlaceholderMaps.delete(sessionId);
+        return {};
+    }
+
+    return entry.placeholderMap;
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [sessionId, entry] of sessionPlaceholderMaps) {
+        if (entry.expiresAt < now) {
+            sessionPlaceholderMaps.delete(sessionId);
+        }
+    }
+}, 60 * 1000);
 
 // Initialize default statistics in storage on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -92,7 +139,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         })
         .then(res => res.json())
         .then(data => {
-            sendResponse({ success: true, maskedPrompt: data.maskedPrompt });
+            mergePlaceholderMap(sessionId, data.placeholderMap);
+            sendResponse({
+                success: true,
+                maskedPrompt: data.maskedPrompt,
+                placeholderMap: data.placeholderMap || {}
+            });
         })
         .catch(err => {
             console.error('Error during background fetch mask:', err);
@@ -104,6 +156,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 3. Inbound Response Unmasking
     if (request.action === 'unmask') {
         const { text, sessionId } = request;
+        const localRestored = restoreMaskedTokens(text, getSessionPlaceholderMap(sessionId));
+
+        if (localRestored !== text) {
+            sendResponse({ success: true, unmaskedText: localRestored, source: 'background-map' });
+            return true;
+        }
 
         fetch(`${GATEWAY_URL}/api/proxy/unmask`, {
             method: 'POST',
