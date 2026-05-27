@@ -89,28 +89,42 @@ chrome.runtime.onInstalled.addListener(() => {
  * @param {string} prompt Raw prompt to check categories.
  */
 function incrementLocalStats(prompt) {
-    chrome.storage.local.get(['stats'], (result) => {
-        const stats = result.stats || {
-            keysBlocked: 0,
-            emailsShielded: 0,
-            piiProtected: 0,
-            complianceWarnings: 0,
-            totalRequests: 0
-        };
+    try {
+        if (!prompt || typeof prompt !== 'string') return;
 
-        stats.totalRequests += 1;
+        chrome.storage.local.get(['stats'], (result) => {
+            try {
+                const stats = result.stats || {
+                    keysBlocked: 0,
+                    emailsShielded: 0,
+                    piiProtected: 0,
+                    complianceWarnings: 0,
+                    totalRequests: 0
+                };
 
-        // Trace standard PII markers
-        const emailRegex = /\S+@\S+\.\S+/g;
-        const apiKeyRegex = /sk-[a-zA-Z0-9]+/g;
-        const phoneRegex = /\b\d{10}\b/g;
+                stats.totalRequests += 1;
 
-        if (emailRegex.test(prompt)) stats.emailsShielded += 1;
-        if (apiKeyRegex.test(prompt)) stats.keysBlocked += 1;
-        if (phoneRegex.test(prompt)) stats.piiProtected += 1;
+                // Trace standard PII markers - avoid g flag reuse issue
+                const hasEmail = /\S+@\S+\.\S+/.test(prompt);
+                const hasApiKey = /sk-[a-zA-Z0-9]+/.test(prompt);
+                const hasPhone = /\b\d{10}\b/.test(prompt);
 
-        chrome.storage.local.set({ stats });
-    });
+                if (hasEmail) stats.emailsShielded += 1;
+                if (hasApiKey) stats.keysBlocked += 1;
+                if (hasPhone) stats.piiProtected += 1;
+
+                chrome.storage.local.set({ stats }, () => {
+                    if (chrome.runtime.lastError) {
+                        console.error('[PromptShield] Stats save error:', chrome.runtime.lastError);
+                    }
+                });
+            } catch (err) {
+                console.error('[PromptShield] Stats processing error:', err);
+            }
+        });
+    } catch (err) {
+        console.error('[PromptShield] Stats function error:', err);
+    }
 }
 
 // Orchestrate messages from injected content.js scripts and popup controls
@@ -262,35 +276,60 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // 4. Update Copyleft/Compliance Stats Counter
     if (request.action === 'incrementCompliance') {
-        chrome.storage.local.get(['stats'], (result) => {
-            const stats = result.stats || {
-                keysBlocked: 0,
-                emailsShielded: 0,
-                piiProtected: 0,
-                complianceWarnings: 0,
-                totalRequests: 0
-            };
-            stats.complianceWarnings += 1;
-            chrome.storage.local.set({ stats }, () => {
-                sendResponse({ success: true });
+        try {
+            chrome.storage.local.get(['stats'], (result) => {
+                try {
+                    const stats = result.stats || {
+                        keysBlocked: 0,
+                        emailsShielded: 0,
+                        piiProtected: 0,
+                        complianceWarnings: 0,
+                        totalRequests: 0
+                    };
+                    stats.complianceWarnings += 1;
+                    chrome.storage.local.set({ stats }, () => {
+                        if (chrome.runtime.lastError) {
+                            console.error('[PromptShield] Compliance stats save error:', chrome.runtime.lastError);
+                            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                        } else {
+                            sendResponse({ success: true });
+                        }
+                    });
+                } catch (err) {
+                    console.error('[PromptShield] Compliance stats error:', err);
+                    sendResponse({ success: false, error: err.message });
+                }
             });
-        });
+        } catch (err) {
+            console.error('[PromptShield] Compliance increment error:', err);
+            sendResponse({ success: false, error: err.message });
+        }
         return true;
     }
 
     // 5. Reset Statistics Dashboard
     if (request.action === 'resetStats') {
-        chrome.storage.local.set({
-            stats: {
-                keysBlocked: 0,
-                emailsShielded: 0,
-                piiProtected: 0,
-                complianceWarnings: 0,
-                totalRequests: 0
-            }
-        }, () => {
-            sendResponse({ success: true });
-        });
+        try {
+            chrome.storage.local.set({
+                stats: {
+                    keysBlocked: 0,
+                    emailsShielded: 0,
+                    piiProtected: 0,
+                    complianceWarnings: 0,
+                    totalRequests: 0
+                }
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('[PromptShield] Reset stats error:', chrome.runtime.lastError);
+                    sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                    sendResponse({ success: true });
+                }
+            });
+        } catch (err) {
+            console.error('[PromptShield] Reset stats function error:', err);
+            sendResponse({ success: false, error: err.message });
+        }
         return true;
     }
 });

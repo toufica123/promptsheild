@@ -31,7 +31,8 @@ function getStableSessionTabId() {
 }
 
 const sessionTabId = getStableSessionTabId();
-console.log(`PromptShield active in tab. Session ID: ${sessionTabId}`);
+console.log(`[PromptShield] ✅ Content script loaded in tab. Session ID: ${sessionTabId}`);
+console.log('[PromptShield] 🛡️ Enterprise token pipeline initializing...');
 
 // ─────────────────────────────────────────────────────────────
 // ENTERPRISE TOKEN PIPELINE INITIALIZATION
@@ -48,9 +49,10 @@ const RAW_SECRET_PATTERNS = [
 let tokenPipeline = null;
 try {
     tokenPipeline = new TokenPipeline(RAW_SECRET_PATTERNS);
-    console.log('[PromptShield] Enterprise token pipeline initialized');
+    console.log('[PromptShield] ✅ Enterprise token pipeline initialized');
 } catch (err) {
-    console.error('[PromptShield] Failed to initialize token pipeline:', err);
+    console.error('[PromptShield] ❌ Failed to initialize token pipeline:', err);
+    console.log('[PromptShield] ⚠️  Extension will continue with fallback protection');
 }
 
 const SHIELD_SVG = `
@@ -265,6 +267,7 @@ function injectShieldStyle() {
 
 /**
  * findTargetInput - Searches DOM for active conversational text input areas.
+ * Enhanced with better detection and logging.
  */
 function findTargetInput() {
     // Standard textareas on ChatGPT, Claude, Gemini, DeepSeek
@@ -275,15 +278,25 @@ function findTargetInput() {
         'textarea[placeholder*="Ask me anything"]',
         'textarea[placeholder*="Message"]',
         'textarea.textarea',
+        'textarea[role="textbox"]',          // Additional selector
         'textarea'                           // general fallback
     ];
 
     for (const selector of selectors) {
         const el = document.querySelector(selector);
-        if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-            return el;
+        if (el) {
+            const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
+            const isConnected = el.isConnected;
+            
+            if (isVisible && isConnected) {
+                console.log('[PromptShield] Found input area:', selector);
+                return el;
+            }
         }
     }
+    
+    // Debug: Log that no input was found
+    console.log('[PromptShield] No input area found. Button will still show.');
     return null;
 }
 
@@ -783,29 +796,27 @@ function interceptAndMask() {
 
 /**
  * renderFloatingShield - Positions and binds the floating Shield overlay next to active input.
+ * NOW: Always visible, not hidden if input not found
  */
 function renderFloatingShield() {
-    const inputArea = findTargetInput();
-    if (!inputArea) {
-        if (activeShieldButton) {
-            activeShieldButton.remove();
-            activeShieldButton = null;
-        }
-        return;
+    // Check if button already exists
+    if (activeShieldButton && document.body.contains(activeShieldButton)) {
+        return; // Already rendered and still in DOM
     }
 
-    if (activeShieldButton) return; // Already rendered
-
+    // Inject styles on first render
     injectShieldStyle();
 
+    // Create button - ALWAYS show it
     const button = document.createElement('div');
     button.className = 'promptshield-btn';
     button.innerHTML = SHIELD_SVG;
     button.title = 'Click to Mask Outbound Secrets via PromptShield';
 
-    // Append globally to document.body as a premium fixed bottom-left floating shield
+    // Append globally to document.body as a premium fixed bottom-right floating shield
     document.body.appendChild(button);
     activeShieldButton = button;
+    console.log('[PromptShield] Shield button rendered and visible in bottom-right');
 
     // Click handler: Intercept prompt, fetch masked state from background script worker
     button.addEventListener('click', async () => {
@@ -815,6 +826,7 @@ function renderFloatingShield() {
         const activeInput = findTargetInput();
         if (!activeInput) {
             console.warn('[PromptShield] Active conversational input area not found in DOM.');
+            alert('PromptShield: Could not find text input area. Please click inside the text field first, then click the shield button.');
             return;
         }
         
@@ -1187,11 +1199,31 @@ function runDomObserver() {
 //  INITIALIZATION
 // ─────────────────────────────────────────────────────────────
 
+console.log('[PromptShield] 🚀 Starting initialization...');
+
 // Run overlay rendering periodically or on dynamic page transitions
-setInterval(renderFloatingShield, 1000);
+setInterval(() => {
+    try {
+        renderFloatingShield();
+    } catch (err) {
+        console.error('[PromptShield] Error in renderFloatingShield:', err);
+    }
+}, 1000);
 
 // Capture Gemini submissions before the page framework consumes raw prompt text.
-interceptAndMask();
+try {
+    interceptAndMask();
+    console.log('[PromptShield] ✅ Masking interception initialized');
+} catch (err) {
+    console.error('[PromptShield] Error initializing masking interception:', err);
+}
 
 // Initialize DOM listener
-runDomObserver();
+try {
+    runDomObserver();
+    console.log('[PromptShield] ✅ DOM observer initialized');
+} catch (err) {
+    console.error('[PromptShield] Error initializing DOM observer:', err);
+}
+
+console.log('[PromptShield] ✅✅✅ FULLY INITIALIZED - Shield button should be visible in bottom-right corner');
